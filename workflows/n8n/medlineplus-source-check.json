@@ -1,0 +1,94 @@
+{
+  "name": "FORGE - MedlinePlus source check (manual)",
+  "active": false,
+  "nodes": [
+    {
+      "id": "manual-start",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "fetch-source",
+      "name": "Fetch MedlinePlus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "retryOnFail": false,
+      "onError": "stopWorkflow",
+      "parameters": {
+        "method": "GET",
+        "url": "https://wsearch.nlm.nih.gov/ws/query",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "db", "value": "healthTopics"},
+            {"name": "term", "value": "diabetes"},
+            {"name": "retmax", "value": "1"},
+            {"name": "rettype", "value": "brief"},
+            {"name": "tool", "value": "forgehacks_health_assistant"}
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "redirect": {"redirect": {"followRedirects": false}},
+          "response": {"response": {"fullResponse": true, "neverError": false, "responseFormat": "text", "outputPropertyName": "body"}}
+        }
+      }
+    },
+    {
+      "id": "guard-response",
+      "name": "Check HTTP and XML safety",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nif (items.length !== 1) throw new Error('Expected one HTTP response');\nconst r = items[0].json;\nif (r.statusCode !== 200) throw new Error('Source HTTP status is not 200');\nif (typeof r.body !== 'string' || !r.body.trim() || r.body.length > 200000) throw new Error('Source body missing or unexpectedly large');\nif (/<!DOCTYPE|<!ENTITY/i.test(r.body)) throw new Error('DTD/entity declarations are not accepted');\nif (!/<nlmSearchResult(?:\\s|>)/.test(r.body)) throw new Error('Unexpected source XML root');\nreturn [{json: {data: r.body}}];"
+      }
+    },
+    {
+      "id": "parse-xml",
+      "name": "Parse XML as data",
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [720, 0],
+      "onError": "stopWorkflow",
+      "parameters": {
+        "mode": "xmlToJson",
+        "dataPropertyName": "data",
+        "options": {
+          "explicitArray": false,
+          "explicitRoot": true,
+          "ignoreAttrs": false,
+          "mergeAttrs": false,
+          "attrkey": "$",
+          "charkey": "_",
+          "trim": true
+        }
+      }
+    },
+    {
+      "id": "report",
+      "name": "Validate and report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nif (items.length !== 1) throw new Error('Expected one parsed document');\nconst root = items[0].json.nlmSearchResult;\nif (!root || root.error || !/^\\d+$/.test(String(root.count)) || Number(root.count) < 1) throw new Error('Source returned an error or no results');\nconst value = root.list && root.list.document;\nconst docs = Array.isArray(value) ? value : value ? [value] : [];\nif (docs.length !== 1) throw new Error('Expected one topic from retmax=1');\nconst doc = docs[0];\nconst url = doc.$ && doc.$.url;\n// Exact HTTPS origin and a topic path; rejects credentials, ports, deceptive hosts and query strings.\nif (typeof url !== 'string' || !/^https:\\/\\/medlineplus\\.gov\\/[a-z0-9_-]+\\.html$/.test(url)) throw new Error('Unexpected source URL');\nconst fields = Array.isArray(doc.content) ? doc.content : doc.content ? [doc.content] : [];\nfunction field(name) {\n  const node = fields.find(n => n.$ && String(n.$.name).toLowerCase() === name.toLowerCase());\n  return node && typeof node._ === 'string' ? node._ : '';\n}\n// Strip markup only to check nonempty text. This is not ingestion or medical validation.\nfunction text(s) { return s.replace(/<[^>]*>/g, ' ').replace(/&(?:#\\d+|#x[0-9a-f]+|[a-z]+);/gi, ' ').replace(/\\s+/g, ' ').trim(); }\nconst title = text(field('title'));\nconst summary = text(field('fullSummary'));\nif (!title || !summary) throw new Error('Missing topic title or full summary');\nreturn [{json: {status: 'source_check_passed', checked_at: new Date().toISOString(), source: 'MedlinePlus', query: 'diabetes', http_status: 200, valid_documents: 1, title, source_url: url, summary_characters: summary.length, note: 'Source availability/format check only. No database update, embedding, AI answer or medical validation.'}}];"
+      }
+    }
+  ],
+  "connections": {
+    "Run manually": {"main": [[{"node": "Fetch MedlinePlus", "type": "main", "index": 0}]]},
+    "Fetch MedlinePlus": {"main": [[{"node": "Check HTTP and XML safety", "type": "main", "index": 0}]]},
+    "Check HTTP and XML safety": {"main": [[{"node": "Parse XML as data", "type": "main", "index": 0}]]},
+    "Parse XML as data": {"main": [[{"node": "Validate and report", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1", "executionTimeout": 90},
+  "pinData": {},
+  "tags": []
+}
