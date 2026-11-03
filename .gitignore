@@ -28,6 +28,7 @@ node_modules/
 dist/
 build/
 .next/
+.svelte-kit/
 .vite/
 coverage/
 

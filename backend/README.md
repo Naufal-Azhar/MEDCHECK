@@ -1,49 +1,58 @@
-# Backend
+# Python data and evaluation utilities
 
-Backend FastAPI akan menjadi modular monolith untuk ingestion, embeddings, retrieval, LLM, safety, dan API.
+`backend/` contains Python offline data/evaluation utilities and their domain
+modules: ingestion, chunking, embedding artifacts, retrieval, grounded-answer
+validation, and safety policy. It is not an application server. The application
+framework, HTTP API, and server-rendered UI now live in the SvelteKit app under
+`frontend/`; FastAPI/Uvicorn and the legacy Python HTTP modules have been retired.
 
-Pada fase ini backend baru menyiapkan struktur project. Endpoint dan database schema akan ditambahkan pada fase berikutnya.
+## Install Python utilities
 
-## FastAPI
-
-From the project root with the project environment active:
-
-```powershell
-. .\scripts\activate-project.ps1
-uvicorn app.main:app --app-dir backend --reload
-```
-
-Endpoints: `GET /health`, `POST /search`, `POST /chat`, and `GET /sources/{id}`.
-
-Example requests:
-
-PowerShell's `curl` command is an alias for `Invoke-WebRequest`, so use
-`Invoke-RestMethod`:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-
-$body = @{ question = "What is diabetes?"; top_k = 3 } | ConvertTo-Json
-Invoke-RestMethod http://127.0.0.1:8000/search -Method Post -ContentType "application/json" -Body $body
-
-$body = @{ question = "What is diabetes?" } | ConvertTo-Json
-Invoke-RestMethod http://127.0.0.1:8000/chat -Method Post -ContentType "application/json" -Body $body
-```
-
-Alternatively, call the real curl executable explicitly:
-
-```powershell
-curl.exe -X POST http://127.0.0.1:8000/search `
-  -H "Content-Type: application/json" `
-  -d '{"question":"What is diabetes?","top_k":3}'
-```
-
-## Menjalankan nanti
-
-Environment Python sebaiknya dibuat dari Python 3.11 atau 3.12:
+Run from the project root (`FORGE`) using Python 3.11 or 3.12:
 
 ```powershell
 py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
 ```
+
+For development and tests, install the development requirements (which include
+the utility dependencies):
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
+.venv\Scripts\python.exe -m pytest backend/tests -q
+```
+
+The Python entry points remain in `scripts/`. Offline processing and validation
+remain available without running a web server. Database operations require local
+PostgreSQL/pgvector; provider-backed embedding and evaluation commands require
+explicit configuration and may incur charges. Do not run live provider checks as
+part of an offline test run. The opt-in PostgreSQL test requires `RUN_DB_TESTS=1`
+and a running local database.
+
+`python-dotenv` is an explicit dependency for utility configuration;
+`pydantic-settings`, `psycopg`, and `httpx` remain for Python settings, database,
+and provider-client utilities respectively.
+
+## Run the SvelteKit application
+
+From the project root, install and run the frontend using Node.js compatible with
+`frontend/package.json`:
+
+```powershell
+npm --prefix frontend install
+npm --prefix frontend run dev
+```
+
+For a production build and Node server:
+
+```powershell
+npm --prefix frontend run build
+npm --prefix frontend start
+```
+
+There is no Python HTTP startup command. API contracts, validation, privacy,
+request IDs, source errors, and HTTP safety preflight are tested in
+`frontend/tests/api.test.ts`; SvelteKit UI/SSR smoke coverage replaces the legacy
+FastAPI homepage/static-file tests. Python tests retain non-HTTP safety policy,
+preflight, prompt-injection, retrieval, and answer-validation coverage.

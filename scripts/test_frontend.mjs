@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { responseView, inputError, safeSourceUrl } from '../frontend/public/view-model.mjs';
+import { responseView, inputError, safeSourceUrl } from '../frontend/src/lib/view-model.mjs';
 
 const fixture = () => ({ request_id: 'test-id', status: 'answered', answer: 'Synthetic explanation.',
   key_points: [], confidence_or_uncertainty: 'Limited evidence.', safety_note: 'Not medical advice.',
@@ -8,7 +8,11 @@ const fixture = () => ({ request_id: 'test-id', status: 'answered', answer: 'Syn
     source_url: 'https://medlineplus.gov/diabetes.html', quote: 'Synthetic excerpt.' }] });
 
 test('input rejects blank and long questions', () => {
-  assert.ok(inputError('  ')); assert.ok(inputError('x'.repeat(2001))); assert.equal(inputError('What is diabetes?'), null);
+  assert.match(inputError('  '), /English or Bahasa Indonesia/);
+  assert.match(inputError('x'.repeat(2001)), /maksimal 2\.000 karakter/);
+  assert.equal(inputError('What is diabetes?'), null);
+  assert.equal(inputError('Apa itu diabetes?'), null);
+  assert.equal(inputError('x'.repeat(2000)), null);
 });
 test('answer preserves source vs explanation and supports empty key points', () => {
   const view = responseView(fixture());
@@ -26,6 +30,25 @@ test('urgent notice cannot be overwritten by model-authored advice', () => {
   assert.equal(view.badge, 'Seek urgent help');
   assert.ok(view.answer.includes('emergency services now'));
   assert.ok(!view.answer.includes('tomorrow'));
+});
+test('Indonesian provider failures show only fixed guidance and preserve request ID', () => {
+  const view = responseView({ ...fixture(), status: 'provider_error', answer: 'UNTRUSTED CLAIM',
+    safety_note: 'UNTRUSTED SAFETY' }, 'id');
+  assert.equal(view.badge, 'Layanan tidak tersedia');
+  assert.equal(view.answer, 'Layanan AI tidak dapat menyelesaikan permintaan. Tidak ada penjelasan yang tersedia. Tidak ada percobaan ulang otomatis.');
+  assert.equal(view.request_id, 'test-id');
+  assert.equal(view.uncertainty, 'Tidak ada penjelasan tervalidasi yang tersedia.');
+  assert.deepEqual(view.sources, []);
+  assert.ok(!JSON.stringify(view).includes('UNTRUSTED'));
+});
+test('Indonesian urgent refusals use fixed emergency advice', () => {
+  const view = responseView({ ...fixture(), status: 'safety_refusal', safety_reason: 'urgent',
+    answer: 'UNTRUSTED: wait until tomorrow' }, 'id');
+  assert.equal(view.badge, 'Segera cari bantuan darurat');
+  assert.equal(view.answer, 'Segera hubungi layanan darurat setempat. Jangan menunggu respons AI. Asisten ini tidak dapat menilai situasi atau menggantikan perawatan darurat.');
+  assert.equal(view.request_id, 'test-id');
+  assert.deepEqual(view.sources, []);
+  assert.ok(!JSON.stringify(view).includes('UNTRUSTED'));
 });
 test('malformed answers are not displayed', () => {
   for (const data of [null, {}, {...fixture(), sources: []}, {...fixture(), status: 'unknown'},

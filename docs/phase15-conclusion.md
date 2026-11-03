@@ -1,5 +1,9 @@
 # Phase 15 — evaluasi MVP dan kesimpulan arsitektur
 
+> Catatan historis sebelum migrasi framework. Runtime aplikasi aktif sekarang
+> SvelteKit/Svelte/TypeScript; lihat `sveltekit-migration.md`. Hasil evaluasi di
+> bawah tidak otomatis memvalidasi runtime baru. FastAPI tidak lagi digunakan.
+
 Tanggal: 2026-10-09. **Keputusan: siap untuk demo lokal terbatas; belum lolos
 gate deployment publik.** Implementasi ada, tetapi kualitas jawaban umum dan
 reproduksibilitas konfigurasi masih perlu diperbaiki. Tidak ada fitur/model/corpus

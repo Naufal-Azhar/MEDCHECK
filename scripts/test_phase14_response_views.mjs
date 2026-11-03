@@ -2,7 +2,7 @@
 // Does not automate a browser or send requests.
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { responseView } from '../frontend/public/view-model.mjs';
+import { responseView } from '../frontend/src/lib/view-model.mjs';
 
 const reportPath = process.argv[2];
 if (!reportPath) throw new Error('Supply a local phase14-e2e JSON report path');

@@ -5,9 +5,10 @@ Only fixed synthetic questions. No browser automation or clinical certification.
 
 import argparse
 import json
+import os
+import shutil
 import socket
 import subprocess
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,12 @@ def main():
     if not args.live:
         print(f"Dry run: {len(selected)} cases. --live may bill embedding + generation + review per unblocked case.")
         return 0
+    node = shutil.which("node")
+    if node is None:
+        raise RuntimeError("Node.js executable not found on PATH; install Node.js before using --live")
+    build = ROOT / "frontend/build/index.js"
+    if not build.is_file():
+        raise RuntimeError(f"Production build not found: {build}; run npm run build in frontend before using --live")
     folder = ROOT / "data/processed/phase14-e2e"
     folder.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -48,19 +55,24 @@ def main():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    report = {"started_at": stamp, "scope": "Real HTTP, DB, Featherless; fixed synthetic input; no browser automation", "cases": []}
+    origin = f"http://127.0.0.1:{port}"
+    env = {**os.environ, "HOST": "127.0.0.1", "PORT": str(port), "ORIGIN": origin}
+    report = {"started_at": stamp, "framework": "sveltekit-node", "scope": "Real HTTP, DB, Featherless; fixed synthetic input; no browser automation", "cases": []}
     with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--app-dir", "backend",
-                                    "--host", "127.0.0.1", "--port", str(port)], cwd=ROOT, stdout=log, stderr=log)
+        process = subprocess.Popen([node, f"--env-file-if-exists={ROOT / '.env'}", str(build)],
+                                   cwd=ROOT, env=env, stdout=log, stderr=log)
         try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=210, trust_env=False) as client:
+            with httpx.Client(base_url=origin, timeout=210, trust_env=False) as client:
                 for _ in range(60):
                     if process.poll() is not None:
                         raise RuntimeError("Test server exited")
                     try:
-                        if client.get("/openapi.json", timeout=1).status_code == 200:
-                            break
-                    except httpx.HTTPError:
+                        response = client.get("/docs", timeout=1)
+                        if response.status_code == 200:
+                            docs = response.json()
+                            if isinstance(docs, dict) and docs.get("openapi"):
+                                break
+                    except (httpx.HTTPError, ValueError):
                         pass
                     time.sleep(.25)
                 else:
@@ -69,7 +81,7 @@ def main():
                 if health.get("database") != "ok":
                     raise RuntimeError("Database health unavailable")
                 report["health"] = health
-                report["frontend_routes"] = {p: client.get(p).status_code for p in ["/", "/assets/app.mjs", "/assets/view-model.mjs"]}
+                report["frontend_routes"] = {p: client.get(p).status_code for p in ["/", "/docs"]}
                 for cid, question, expected, reason in selected:
                     started = time.perf_counter()
                     response = client.post("/chat", json={"question": question})
@@ -91,9 +103,15 @@ def main():
                         print("Provider/infrastructure error; stopped without retry.", flush=True)
                         break
         finally:
-            process.terminate()
-            process.wait(timeout=15)
-            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            try:
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            finally:
+                report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Report: {report_path}", flush=True)
     return 0 if len(report["cases"]) == len(selected) and all(c["passed"] for c in report["cases"]) else 1
 

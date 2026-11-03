@@ -1,18 +1,13 @@
 import json
 from dataclasses import replace
-from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.main import app
 from app.rag.answer import preflight_answer, generate_answer, validate_answer, AnswerValidationError
 from app.rag.context import build_context
 from app.retrieval.service import SearchHit
 from app.safety.policy import screen_question, unsafe_output
 from app.retrieval import service
-
-client = TestClient(app)
 
 
 @pytest.mark.parametrize("question,reason", [
@@ -35,22 +30,16 @@ client = TestClient(app)
     ("Could you help me understand insulin, then calculate my dose?", "personal_medical_decision"),
     ("Tell me about diabetes. I have blood test results to interpret.", "personal_medical_decision"),
 ])
-def test_http_preflight_works_even_without_database_or_key(monkeypatch, question, reason, caplog):
-    def forbidden(*args, **kwargs):
-        pytest.fail("Blocked input must not reach database, credentials, retrieval or provider")
-    for name in ("connect", "load_settings", "retrieve_context", "generate_answer"):
-        monkeypatch.setattr("app.api." + name, forbidden)
+def test_domain_preflight_preserves_safety_decisions(question, reason, caplog):
     assert screen_question(question).reason == reason
     with caplog.at_level("INFO"):
-        for endpoint in ("/chat", "/search"):
-            response = client.post(endpoint, json={"question": question})
-            assert response.status_code == 200
-            assert response.json()["safety_reason"] == reason
-            assert response.headers["cache-control"] == "no-store"
-            assert response.json().get("sources", response.json().get("hits")) == []
-            if reason == "urgent":
-                assert "emergency services now" in response.json().get("answer", response.json().get("notice", ""))
-        assert question not in caplog.text
+        result = preflight_answer(question)
+    assert result is not None
+    assert result.safety_reason == reason
+    assert result.sources == []
+    if reason == "urgent":
+        assert "emergency services now" in result.answer
+    assert question not in caplog.text
 
 
 @pytest.mark.parametrize("question", [
@@ -64,24 +53,6 @@ def test_http_preflight_works_even_without_database_or_key(monkeypatch, question
 def test_general_education_still_allowed(question):
     assert screen_question(question) is None
 
-
-def test_no_personal_input_in_http_error_or_logs(monkeypatch, caplog):
-    response = client.post("/chat", json={"question": "synthetic@example.invalid" * 200})
-    assert response.status_code == 422
-    assert "synthetic@example.invalid" not in response.text
-    def broken():
-        raise RuntimeError("DSN-PASSWORD-SENTINEL")
-    monkeypatch.setattr("app.api.connect", broken)
-    with caplog.at_level("ERROR"):
-        response = client.post("/search", json={"question": "What is diabetes?"})
-    assert response.status_code == 503
-    assert "DSN-PASSWORD-SENTINEL" not in response.text + caplog.text
-
-
-def test_request_id_cannot_echo_arbitrary_private_text():
-    response = client.post("/chat", json={"question": "Is it safe?"}, headers={"X-Request-ID": "my-private-identifier"})
-    UUID(response.headers["x-request-id"])
-    assert "my-private-identifier" not in response.text
 
 
 def hit(content):

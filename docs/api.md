@@ -1,82 +1,65 @@
-# Phase 11 — FastAPI
+# SvelteKit API
 
-## Phase 14 safety update
+Semua endpoint sekarang diimplementasikan sebagai route server SvelteKit pada origin yang sama dengan UI. Tidak ada FastAPI/Uvicorn.
 
-Preflight runs before DB/key access on both `/chat` and `/search`. Blocked search
-returns no hits and an empty question, with `status`, `safety_reason` and a notice.
-Chat adds `safety_reason` and supports `privacy_refusal` and `clarification_needed`.
-Known urgent wording gets immediate generic emergency referral, with no AI call.
-Request IDs are accepted only as UUIDs; otherwise regenerated. Validation errors
-do not echo input. Chat/search responses use `Cache-Control: no-store`.
-See `docs/phase14-safety.md` for limitations and verification status; this supersedes
-earlier request-ID handling below.
+## Jalankan
 
-Run from the project root with the project-local environment:
+Dari root project:
 
-```powershell
-. .\scripts\activate-project.ps1
-uvicorn app.main:app --app-dir backend --reload
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run dev
 ```
 
-On Windows PowerShell, `curl` is commonly an alias for `Invoke-WebRequest` and
-does not accept Linux curl flags. Use `Invoke-RestMethod` or explicitly call
-`curl.exe`.
+Development URL: `http://127.0.0.1:5173`; production adapter-node default port 3000. Konfigurasi provider/database dibaca dari `.env` root, hanya pada server. Database memerlukan migrasi dan ingestion manual yang sudah ada.
 
-## Endpoints
+## Endpoint
 
-### `GET /health`
+| Method | URL | Fungsi |
+| --- | --- | --- |
+| GET | `/` | Halaman UI Svelte dengan SSR |
+| GET | `/health` | HTTP 200 dengan `status=ok` atau `degraded`, bergantung koneksi DB |
+| POST | `/search` | Retrieval MedlinePlus; bukan jawaban AI |
+| POST | `/chat` | Preflight, retrieval, generation, validasi, claim review |
+| GET | `/sources/{id}` | Metadata sumber; 404 jika tidak ditemukan |
+| GET | `/docs` | Dokumen OpenAPI JSON, bukan Swagger UI |
 
-Returns service and database status. `200` with `status=ok` means the database
-check passed; `status=degraded` means the process is alive but DB unavailable.
-
-### `POST /search`
-
-Request:
-
-```json
-{"question":"What is diabetes?","top_k":3}
-```
-
-PowerShell example:
-
-```powershell
-$body = @{ question = "What is diabetes?"; top_k = 3 } | ConvertTo-Json
-Invoke-RestMethod http://127.0.0.1:8000/search -Method Post -ContentType "application/json" -Body $body
-```
-
-Returns retrieved MedlinePlus chunks, original URLs, similarity scores and timing.
-It does not call Featherless chat generation and is not an answer.
-
-### `POST /chat`
-
-Request:
+Body JSON `/chat` dan `/search`:
 
 ```json
 {"question":"What is diabetes?","top_k":5}
 ```
 
-PowerShell example:
+Pertanyaan kesehatan umum dapat diajukan dalam bahasa Inggris, misalnya
+`What is diabetes?`, atau Bahasa Indonesia, misalnya `Apa itu diabetes?`.
+Bahasa dikenali dari frasa pertanyaan, bukan dari field request terpisah.
+Jawaban Indonesia harus didukung kutipan MedlinePlus asli yang tetap berbahasa
+Inggris dan disetujui oleh review bilingual; tidak ada jaminan kesetaraan
+terjemahan secara klinis. Pendeteksi bahasa masih heuristik.
+
+`question` wajib string non-blank, maksimal 2000 karakter; `top_k` integer 1–20 (default 5). Body dibatasi 32 KiB. Validation errors tidak menggemakan input. Kirim `Content-Type: application/json`.
+
+Contoh PowerShell (menggunakan API provider berbayar bila konfigurasi lengkap):
 
 ```powershell
 $body = @{ question = "What is diabetes?"; top_k = 5 } | ConvertTo-Json
-Invoke-RestMethod http://127.0.0.1:8000/chat -Method Post -ContentType "application/json" -Body $body
+Invoke-RestMethod http://127.0.0.1:5173/chat -Method Post -ContentType "application/json" -Body $body
 ```
 
-Runs retrieval, safety preflight, grounded Featherless generation and claim review.
-Personal medical decision requests are refused before embedding/provider calls.
-An educational answer can use two provider calls: generation and review.
+## Respons dan safety
 
-### `GET /sources/{id}`
+Chat mempertahankan field `request_id`, `status`, `answer`, `key_points`, `sources`, `confidence_or_uncertainty`, `safety_note`, `usage`, `safety_reason`. Status: `answered`, `insufficient_evidence`, `safety_refusal`, `privacy_refusal`, `clarification_needed`, `invalid_response`, `provider_error`.
 
-Returns configured source metadata and `404` if absent.
+Preflight berjalan sebelum DB/API key/provider. Urgent wording yang dikenali mendapat arahan generik ke layanan darurat, bukan diagnosis. Search yang diblokir mengembalikan `question` kosong, `hits` kosong, notice dan safety reason. Nearest-neighbor similarity bukan confidence medis.
 
-## Operational behavior
+`/search` edukatif dapat menggunakan satu embedding API call. `/chat` edukatif dapat memakai tiga provider call: embedding, generation dan review. Tidak ada retry otomatis. Abort pada browser tidak menjamin server/provider berhenti memproses atau menagih.
 
-- `X-Request-ID` is accepted or generated and returned on every response.
-- Logs include request ID, durations, hit count and source IDs, but not question,
-  evidence text, API key, or provider response.
-- `422` is used for invalid request data; `503` for unavailable database/provider.
-- Error responses intentionally avoid database/provider details.
-- No authentication, rate limiting, CORS policy, or public deployment is implemented.
-  This is a development API; those are required before exposure beyond localhost.
-- Response schema is MVP and may evolve before frontend integration.
+## Operasional
+
+- UUID valid pada `X-Request-ID` dipakai kembali; selain itu dibuat UUID baru. ID dikembalikan pada header respons.
+- Respons memakai `Cache-Control: no-store` dan `X-Content-Type-Options: nosniff`.
+- Invalid request: 422; DB/provider/config unavailable: 503, dengan pesan aman tanpa detail sensitif.
+- Penolakan atau respons LLM yang ditahan dapat tetap HTTP 200: client harus memeriksa `status`.
+- Tidak ada autentikasi/rate limit. Hanya untuk demo lokal; jangan membuka endpoint berbayar ke publik tanpa kontrol akses dan pembatasan biaya.
+
+Lihat `sveltekit-migration.md` dan source `frontend/src/routes/docs/+server.ts` untuk kontrak OpenAPI.

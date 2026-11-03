@@ -1,38 +1,52 @@
-# Frontend
+# Aplikasi SvelteKit
 
-Frontend MVP menggunakan HTML, CSS dan JavaScript native, tanpa framework, npm
-dependency, CDN, font eksternal, analytics, atau build step. File publik saja
-disajikan oleh FastAPI, sehingga tidak memerlukan dev server frontend atau CORS.
+UI dan API FORGE sekarang berjalan dalam **satu aplikasi SvelteKit 3 / Svelte 5** dengan TypeScript dan adapter Node. Tidak ada server FastAPI, proxy Python, atau pemanggilan subprocess Python pada request aplikasi.
 
-## Jalankan
+## Development
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+Dari root project:
+
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run dev
 ```
 
-Buka http://127.0.0.1:8000/ (bukan file HTML langsung). Jika server sebelumnya
-berjalan tanpa reload, restart terlebih dahulu. `/docs` tetap tersedia.
+Buka `http://127.0.0.1:5173`. Database disiapkan melalui `docker compose up -d postgres` dan migrasi/ingestion Python yang sudah ada. Dependensi membutuhkan Node 24 LTS atau 22.17+.
 
-Hanya tombol submit yang mengirim `POST /chat`. Contoh pertanyaan hanya mengisi
-input. Tidak ada history/localStorage atau penyimpanan pertanyaan di frontend.
-Browser/network/backend dapat memproses request; jangan memasukkan data pribadi.
-State: kosong, loading, jawaban, penolakan, evidence kurang, error HTTP/network,
-timeout dan respons tidak valid. Key points kosong disembunyikan. Kutipan sumber
-terpisah dari penjelasan AI; semua teks dinamis ditulis dengan `textContent`.
+`vite.config.ts` menetapkan `env.dir: '..'` agar konfigurasi memakai `.env` root. `src/env.ts` mendeklarasikan variabel private runtime; secret tidak boleh diekspor ke client. Build dan refusal lokal dapat berjalan tanpa API key.
 
-## Testing
+## Pengujian
 
-```powershell
-node --test scripts/test_frontend.mjs
-.\.venv\Scripts\python.exe -m pytest backend/tests/test_frontend_routes.py -q
+```sh
+npm --prefix frontend run check
+npm --prefix frontend test
+npm --prefix frontend run build
+npm --prefix frontend run test:smoke
 ```
 
-Uji browser manual: contoh tidak membuat request, submit sekali saat loading,
-penolakan tanpa sumber palsu, kegagalan jaringan tidak meninggalkan jawaban lama,
-navigasi keyboard, layar kecil/zoom, dan link sumber terbuka di tab baru.
-Tes lokal ini belum menggantikan uji visual/interaksi di browser pengguna.
+Vitest menguji kontrak tampilan, safety, grounding, provider, retrieval dan endpoint dengan mock, tanpa biaya API. Smoke test menjalankan hasil build pada port loopback sementara lalu menghentikannya otomatis; tes ini tidak melakukan panggilan provider atau memakai DB nyata. Pengujian visual/interaksi browser pengguna tetap perlu dilakukan.
 
-Development-only: belum ada auth/rate limit untuk public deployment. Backend
-safety/grounding masih memiliki keterbatasan; UI tidak mengklaim confidence medis.
-ProjectAAL belum digunakan: tidak dibutuhkan untuk UI kecil ini dan akses/integrasi
-tidak diasumsikan tersedia. Tidak ada fitur backlog tambahan yang diaktifkan.
+## Production lokal
+
+```sh
+npm --prefix frontend run build
+npm --prefix frontend start
+```
+
+Default port 3000. `start` memuat `../.env` bila tersedia melalui Node `--env-file-if-exists`. Set `ORIGIN` sesuai origin publik jika menjalankan di belakang reverse proxy. Jangan membuka server ke publik sebelum access control, rate limit, HTTPS, secrets, dan evaluasi kualitas siap.
+
+## Perilaku UI
+
+- Pertanyaan kesehatan umum diterima dalam bahasa Inggris maupun Bahasa Indonesia.
+  Untuk pertanyaan Indonesia yang dikenali, model diminta menjawab dalam bahasa
+  Indonesia dengan kutipan sumber asli MedlinePlus tetap dalam bahasa Inggris.
+  Terjemahan hanya boleh ditampilkan bila kutipan persis dan review klaim lintas
+  bahasa lolos; ini bukan jaminan akurasi medis. Pengenalan bahasa heuristik,
+  jadi pertanyaan ambigu dapat salah dikenali.
+- Hanya submit mengirim `POST /chat`; contoh pertanyaan hanya mengisi textarea.
+- Kontrol dinonaktifkan saat loading; ada timeout 210 detik dan tidak ada retry otomatis.
+- Status refusal, urgent, kurang evidence, error, dan respons tidak valid tidak menampilkan klaim model yang ditolak.
+- Source wording dibedakan dari penjelasan AI; link sumber hanya HTTPS MedlinePlus.
+- Svelte melakukan escaping teks; tidak menggunakan `{@html}`, localStorage, analytics, atau history pertanyaan.
+
+API: `/chat`, `/search`, `/health`, `/sources/{id}`; `/docs` adalah OpenAPI JSON. Aset disajikan oleh SvelteKit, bukan folder `public` lama. Lihat `../docs/sveltekit-migration.md`.

@@ -1,5 +1,14 @@
 # Scripts
 
+## Runtime setelah migrasi SvelteKit
+
+Server aplikasi dijalankan dengan `npm --prefix frontend run dev`, bukan Uvicorn.
+Skrip Python di sini tetap merupakan utilitas ingestion/data/evaluasi legacy;
+modul Python tidak dipanggil oleh request SvelteKit. Evaluasi HTTP lama perlu
+menggunakan base URL baru (development port 5173, production default 3000).
+`node --test scripts/test_frontend.mjs` menguji view-model Svelte yang aktif.
+Lihat `docs/sveltekit-migration.md`; uraian fase di bawah adalah riwayat pipeline.
+
 ## Corpus experiment
 
 See [`docs/corpus-experiment-results.md`](../docs/corpus-experiment-results.md).
